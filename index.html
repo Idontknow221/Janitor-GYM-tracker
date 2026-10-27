@@ -413,6 +413,22 @@ textarea{
 .exresume:active{opacity:.85;}
 .exresume .sp{margin-left:auto;font-weight:500;opacity:.85;font-size:12px;}
 
+/* ===== 實際次數／STEP／備份 ===== */
+.bkwarn{border:1px solid var(--warn);background:var(--warn-soft);color:var(--ink);padding:12px 14px;border-radius:var(--radius);margin-bottom:12px;font-size:13px;line-height:1.6;}
+.bkwarn b{color:var(--warn);}
+.bkwarn .btn{margin-top:8px;}
+.steptag{display:inline-block;margin-left:6px;font-size:10px;font-weight:800;padding:2px 7px;border-radius:999px;background:var(--accent-soft);color:var(--accent);white-space:nowrap;}
+.deftag{display:inline-block;margin-left:6px;font-size:10px;font-weight:800;padding:2px 7px;border-radius:999px;background:var(--accent-soft);color:var(--accent);}
+.lastline{font-size:12px;color:var(--muted);margin-top:4px;}
+.acttbl{width:calc(100% - 24px);margin:8px 12px 4px;border-collapse:collapse;font-size:12.5px;}
+.acttbl th{font-size:10.5px;letter-spacing:.06em;color:var(--muted);font-weight:700;text-align:left;padding:4px 4px;}
+.acttbl td{padding:3px 4px;}
+.acttbl td.rn{width:52px;color:var(--muted);font-weight:700;white-space:nowrap;}
+.acttbl input{width:100%;box-sizing:border-box;padding:7px 8px;border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:var(--radius);font-size:15px;font-family:inherit;}
+.actnote{font-size:11.5px;color:var(--muted);margin:0 12px 6px;}
+.altsub{font-size:11.5px;color:var(--muted);margin-top:2px;}
+.swp .opt .row2{display:flex;gap:6px;margin-top:8px;}
+.swp .opt .row2 .btn{flex:1;}
 /* ===== 換動作 ===== */
 .swapbtn{background:none;border:1px solid var(--accent);color:var(--accent);font-size:11px;font-weight:800;font-family:inherit;
   padding:3px 9px;border-radius:999px;cursor:pointer;margin-left:6px;letter-spacing:.03em;}
@@ -576,6 +592,7 @@ function loadState(){
 }
 function saveState(){ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
 let state = loadState();
+if(!state.defaultSwaps) state.defaultSwaps = {};
 
 /* ============ 訓練中草稿（Draft） ============
    解決手機瀏覽器把背景分頁記憶體整個清掉／重整，導致進行中的訓練
@@ -613,6 +630,7 @@ function restoreDraftIfAny(){
   if(confirm(msg)){
     sessionCtx = ctx;
     if(!sessionCtx.swaps) sessionCtx.swaps = {};
+    if(!sessionCtx.actual) sessionCtx.actual = blankActual(sessionCtx.day);
     // timer 是 UI 暫存狀態，重整後 interval 已經沒了，重置成停止狀態避免顯示錯亂
     sessionCtx.timer = {ss:null, secs:0, running:false};
     currentTab = "session";
@@ -1176,6 +1194,77 @@ function exOf(dayKey, i, slot, swaps){
   const a = (ALT_LIB[base.en]||[])[ai];
   if(!a) return base;
   return {name:a.n, en:null, target:(a.t||base.target), cue:"替代 "+base.name+"｜需要："+a.g+"。"+a.c, swapOf:base.name};
+}
+/* 「以後都用這個替代」：key＝原動作 en，value＝替代動作名稱。同一個動作出現在不同天也一起套用 */
+function defaultSwapsFor(dayKey){
+  const out = {}, ds = state.defaultSwaps||{};
+  DAYS[dayKey].supersets.forEach((ss,i)=>["a","b"].forEach(slot=>{
+    const n = ds[ss[slot].en]; if(!n) return;
+    const ai = (ALT_LIB[ss[slot].en]||[]).findIndex(a=>a.n===n);
+    if(ai>=0) out[i+slot] = ai;
+  }));
+  return out;
+}
+function blankActual(dayKey){
+  return DAYS[dayKey].supersets.map(ss=> Array.from({length:ss.rounds}, ()=>({a:"",b:""})));
+}
+/* 這個動作上一次實際做了多少（依動作名稱找，替代動作也有自己的紀錄） */
+function lastActual(name){
+  const ss = [...state.sessions].sort((x,y)=> (y.id||0)-(x.id||0));
+  for(const s of ss){
+    if(!s.actual || !DAYS[s.day]) continue;
+    for(let i=0;i<DAYS[s.day].supersets.length;i++){
+      for(const slot of ["a","b"]){
+        if(exOf(s.day,i,slot,s.swaps).name!==name) continue;
+        const v = (s.actual[i]||[]).map(r=>r[slot]).filter(x=>x!=="" && x!=null);
+        if(v.length) return {date:s.date, vals:v};
+      }
+    }
+  }
+  return null;
+}
+function unitOf(target){ return /秒/.test(target) ? "秒" : "下"; }
+/* 用過的替代動作（給進度階梯頁） */
+function usedAlts(){
+  const map = new Map();
+  state.sessions.forEach(s=>{
+    if(!s.swaps || !DAYS[s.day]) return;
+    Object.keys(s.swaps).forEach(k=>{
+      const i=+k.slice(0,-1), slot=k.slice(-1);
+      if(!DAYS[s.day].supersets[i]) return;
+      const e = exOf(s.day,i,slot,s.swaps);
+      if(e.swapOf && !map.has(e.name)) map.set(e.name, e);
+    });
+  });
+  Object.entries(state.defaultSwaps||{}).forEach(([en,n])=>{
+    if(map.has(n)) return;
+    const base = allExercises().find(e=>e.en===en);
+    if(base) map.set(n,{name:n, swapOf:base.name});
+  });
+  return [...map.values()];
+}
+/* ===== 備份 ===== */
+const BACKUP_DAYS = 14;
+function backupDue(){
+  if(!state.sessions.length) return false;
+  if(!state.lastBackup) return true;
+  return (Date.now()-state.lastBackup) > BACKUP_DAYS*86400000;
+}
+function sessionsSinceBackup(){
+  if(!state.lastBackup) return state.sessions.length;
+  return state.sessions.filter(s=> s.id > state.lastBackup).length;
+}
+function fmtTs(ts){
+  const d=new Date(ts);
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+function doExport(){
+  state.lastBackup = Date.now(); saveState();
+  const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `h30-backup-${todayStr()}.json`;
+  a.click(); setTimeout(()=>URL.revokeObjectURL(url), 1000);
 }
 function flowFor(dayKey, i, swaps){
   const ss = DAYS[dayKey].supersets[i];
@@ -1994,6 +2083,8 @@ function renderHome(){
   const proteinOn = !!state.protein[todayStr()];
 
   return `
+    ${backupDue() ? `<div class="bkwarn"><b>該備份了</b>　${state.lastBackup ? `距離上次備份超過 ${BACKUP_DAYS} 天` : "還沒有備份過"}，有 ${sessionsSinceBackup()} 筆訓練只存在這支手機的瀏覽器裡。清除瀏覽器資料或換手機就會不見。
+      <button class="btn accent sm block" id="exportBtnHome">現在匯出備份</button></div>` : ""}
     <div class="card">
       <div class="section-title"><span class="num">01</span><h2>本週訓練</h2></div>
       <div class="week-strip">
@@ -2040,7 +2131,8 @@ function startSession(dayKey){
     endTime: null,
     warmupChecked: DAYS[dayKey].warmup.map(()=>false),
     rounds: DAYS[dayKey].supersets.map(()=>0), // completed rounds 0-3
-    swaps: {},        // {"0a":替代動作編號}，key＝第幾組 superset + a/b
+    swaps: defaultSwapsFor(dayKey),  // {"0a":替代動作編號}，key＝第幾組 superset + a/b
+    actual: blankActual(dayKey),     // 每輪每個動作實際做的次數／秒數
     swapOpen: null,
     rir: DAYS[dayKey].supersets.map(()=>null),
     note: "",
@@ -2089,20 +2181,27 @@ function renderSwapPanel(i, slot){
   const day = sessionCtx.day;
   const base = DAYS[day].supersets[i][slot];
   const cur = sessionCtx.swaps ? sessionCtx.swaps[i+slot] : null;
+  const def = (state.defaultSwaps||{})[base.en] || null;
   const alts = ALT_LIB[base.en]||[];
   return `<div class="swp">
     <div class="st">選一個改做（目標會一起換）</div>
-    ${cur!==null && cur!==undefined ? `<div class="opt">
+    ${(cur!==null && cur!==undefined) || def ? `<div class="opt">
       <div class="an">原動作：${base.name}</div>
       <div class="rx">目標 <b>${base.target}</b></div>
-      <button class="btn ghost sm go" data-swapto="${i}-${slot}-back">換回原動作</button></div>` : ""}
+      <div class="row2">
+        ${cur!==null && cur!==undefined ? `<button class="btn ghost sm" data-swapto="${i}-${slot}-back">今天換回</button>` : ""}
+        ${def ? `<button class="btn ghost sm" data-swapdef="${i}-${slot}-back">以後都做原動作</button>` : ""}
+      </div></div>` : ""}
     ${alts.map((a,ai)=>{
-      const on = cur===ai;
+      const on = cur===ai, isDef = def===a.n;
       return `<div class="opt">
-        <div class="an">${a.n}${on?"（目前）":""}</div>
+        <div class="an">${a.n}${on?"（目前）":""}${isDef?`<span class="deftag">預設</span>`:""}</div>
         <div class="ag">需要：${a.g}</div>
         <div class="rx">目標 <b>${a.t||base.target}</b></div>
-        <button class="btn accent sm go" data-swapto="${i}-${slot}-${ai}" ${on?"disabled":""}>改做這個</button>
+        <div class="row2">
+          <button class="btn ghost sm" data-swapto="${i}-${slot}-${ai}" ${on?"disabled":""}>只有今天</button>
+          <button class="btn accent sm" data-swapdef="${i}-${slot}-${ai}" ${isDef?"disabled":""}>以後都做這個</button>
+        </div>
       </div>`;
     }).join("")}
     <button class="btn ghost sm" style="width:100%" data-swapopen="${i}${slot}">收起</button>
@@ -2114,12 +2213,29 @@ function exRow(i, slot){
   const ex = exOf(day,i,slot,sessionCtx.swaps);
   const swapped = !!ex.swapOf;
   const hasAlt = (ALT_LIB[base.en]||[]).length>0;
+  const stage = state.stages[ex.name]||0;
+  const last = lastActual(ex.name);
   return `
       <div class="ex-row">
-        <div class="top"><span class="name">${slot.toUpperCase()} · ${ex.name}${ex.en&&EX_LIB[ex.en]?`<button class="exguide" data-exjump="${ex.en}">怎麼做</button>`:""}${hasAlt?`<button class="swapbtn" data-swapopen="${i}${slot}">${swapped?"換別的":"做不了？換動作"}</button>`:""}${swapped?`<span class="swaptag">替代</span>`:""}</span><span class="target">${ex.target}</span></div>
+        <div class="top"><span class="name">${slot.toUpperCase()} · ${ex.name}${ex.en&&EX_LIB[ex.en]?`<button class="exguide" data-exjump="${ex.en}">怎麼做</button>`:""}${hasAlt?`<button class="swapbtn" data-swapopen="${i}${slot}">${swapped?"換別的":"做不了？換動作"}</button>`:""}${swapped?`<span class="swaptag">替代</span>`:""}${swapped && (state.defaultSwaps||{})[base.en]===ex.name?`<span class="deftag">預設</span>`:""}${stage>0?`<span class="steptag">STEP ${stage} · ${STEPS[stage-1].t}</span>`:""}</span><span class="target">${ex.target}</span></div>
         ${ex.cue?`<div class="cue">${ex.cue}</div>`:""}
+        ${last ? `<div class="lastline">上次（${fmtShort(last.date)}）：${last.vals.join("、")} ${unitOf(ex.target)}</div>` : ""}
       </div>
       ${sessionCtx.swapOpen===(i+slot) ? renderSwapPanel(i,slot) : ""}`;
+}
+function renderActual(ss, i){
+  const day = sessionCtx.day;
+  const A = exOf(day,i,"a",sessionCtx.swaps), B = exOf(day,i,"b",sessionCtx.swaps);
+  if(!sessionCtx.actual) sessionCtx.actual = blankActual(day);
+  const rows = sessionCtx.actual[i];
+  const ph = t=> (String(t).match(/\d+/)||[""])[0];
+  return `<table class="acttbl">
+      <tr><th></th><th>A 實際（${unitOf(A.target)}）</th><th>B 實際（${unitOf(B.target)}）</th></tr>
+      ${rows.map((r,ri)=>`<tr><td class="rn">第${ri+1}輪</td>
+        <td><input type="number" inputmode="numeric" data-act="${i}-${ri}-a" value="${r.a}" placeholder="${ph(A.target)}"></td>
+        <td><input type="number" inputmode="numeric" data-act="${i}-${ri}-b" value="${r.b}" placeholder="${ph(B.target)}"></td></tr>`).join("")}
+    </table>
+    <div class="actnote">兩格都填了就自動算完成 1 輪。「/邊」的動作填單邊次數。</div>`;
 }
 function renderSuperset(ss, i){
   const rounds = sessionCtx.rounds[i];
@@ -2131,6 +2247,7 @@ function renderSuperset(ss, i){
       ${exRow(i,"a")}
       ${exRow(i,"b")}
       <div class="flow">${flowFor(sessionCtx.day,i,sessionCtx.swaps)}</div>
+      ${renderActual(ss,i)}
       <div class="done-row">
         <button class="btn sm ghost" data-round-minus="${i}" ${rounds<=0?"disabled":""}>−1 輪</button>
         <label>已完成 ${rounds} / ${ss.rounds} 輪</label>
@@ -2174,7 +2291,7 @@ function stageCaption(stage){
   return `目前難度：${s.t} — ${s.d}`;
 }
 function renderProgress(){
-  const exs = allExercises();
+  const exs = allExercises().concat(usedAlts());
   return `
     <div class="card">
       <div class="section-title"><span class="num">02</span><h2>進度階梯</h2></div>
@@ -2185,9 +2302,11 @@ function renderProgress(){
       return `
       <div class="ex-card">
         <div class="top">
-          <span class="name">${ex.name}</span>
+          <span class="name">${ex.name}${ex.swapOf?`<span class="swaptag">替代</span>`:""}${ex.swapOf && Object.values(state.defaultSwaps||{}).includes(ex.name)?`<span class="deftag">預設</span>`:""}</span>
           <span class="stage-label">${stage===0?"基準":"STEP "+stage}</span>
         </div>
+        ${ex.swapOf?`<div class="altsub">替代 ${ex.swapOf}</div>`:""}
+        ${(()=>{ const l=lastActual(ex.name); return l?`<div class="altsub">上次（${fmtShort(l.date)}）：${l.vals.join("、")}</div>`:""; })()}
         <div class="ladder">
           ${[1,2,3,4,5].map(n=>`<div class="rung ${n<=stage?"on":""}"></div>`).join("")}
         </div>
@@ -2216,6 +2335,7 @@ function renderLog(){
           <input type="file" id="importFile" accept="application/json" class="hidden">
         </label>
       </div>
+      <div class="altsub">上次備份：${state.lastBackup ? fmtTs(state.lastBackup) : "從未備份"}</div>
     </div>
     ${sessions.length===0 ? `<div class="empty-state">還沒有任何紀錄，練完第一次訓練後會出現在這裡</div>` :
       sessions.map(s=>{
@@ -2234,6 +2354,17 @@ function renderLog(){
           <div class="ss-dots">
             ${s.rounds.map((r,i)=>`<span class="${r>=DAYS[s.day].supersets[i].rounds?"done":""}">SS${i+1} ${r}/${DAYS[s.day].supersets[i].rounds}</span>`).join("")}
           </div>
+          ${(()=>{
+            if(!s.actual) return "";
+            const lines=[];
+            DAYS[s.day].supersets.forEach((ss,i)=>["a","b"].forEach(slot=>{
+              const v=(s.actual[i]||[]).map(r=>r[slot]).filter(x=>x!==""&&x!=null);
+              if(!v.length) return;
+              const e=exOf(s.day,i,slot,s.swaps);
+              lines.push(`<div><b>${e.name}</b>：${v.join("、")} ${unitOf(e.target)}</div>`);
+            }));
+            return lines.length ? `<div class="pn">${lines.join("")}</div>` : "";
+          })()}
           ${(()=>{
             const sw = s.swaps||{}; const out=[];
             Object.keys(sw).forEach(k=>{
@@ -2361,14 +2492,65 @@ function bindDynamic(){
       render();
     });
   });
+  function clearSlot(i, slot){
+    if(sessionCtx.actual && sessionCtx.actual[i]) sessionCtx.actual[i].forEach(r=> r[slot]="");
+  }
+  function slotHasData(i, slot){
+    return !!(sessionCtx.actual && sessionCtx.actual[i] && sessionCtx.actual[i].some(r=> r[slot]!==""));
+  }
+  function applySwap(i, slot, ai){
+    if(!sessionCtx.swaps) sessionCtx.swaps = {};
+    const key = i+slot;
+    if(ai===null) delete sessionCtx.swaps[key]; else sessionCtx.swaps[key] = ai;
+    clearSlot(i, slot);
+    sessionCtx.swapOpen = null;
+    render();
+  }
   document.querySelectorAll("[data-swapto]").forEach(b=>{
     b.addEventListener("click", ()=>{
       const [is, slot, ai] = b.dataset.swapto.split("-");
-      if(!sessionCtx.swaps) sessionCtx.swaps = {};
-      const key = is+slot;
-      if(ai==="back") delete sessionCtx.swaps[key]; else sessionCtx.swaps[key] = +ai;
-      sessionCtx.swapOpen = null;
-      render();
+      const i = +is;
+      if(slotHasData(i,slot) && !confirm("這個動作已經填了次數，換動作會清掉這個動作已填的次數。要換嗎？")) return;
+      applySwap(i, slot, ai==="back" ? null : +ai);
+    });
+  });
+  document.querySelectorAll("[data-swapdef]").forEach(b=>{
+    b.addEventListener("click", ()=>{
+      const [is, slot, ai] = b.dataset.swapdef.split("-");
+      const i = +is;
+      const base = DAYS[sessionCtx.day].supersets[i][slot];
+      const target = ai==="back" ? null : +ai;
+      const curNow = sessionCtx.swaps ? sessionCtx.swaps[i+slot] : null;
+      const changing = target===null ? (curNow!==null && curNow!==undefined) : curNow!==target;
+      if(changing && slotHasData(i,slot) && !confirm("這個動作已經填了次數，換動作會清掉這個動作已填的次數。要換嗎？")) return;
+      if(!state.defaultSwaps) state.defaultSwaps = {};
+      if(target===null) delete state.defaultSwaps[base.en];
+      else state.defaultSwaps[base.en] = ALT_LIB[base.en][target].n;
+      saveState();
+      if(changing) applySwap(i, slot, target); else { sessionCtx.swapOpen=null; render(); }
+    });
+  });
+  document.querySelectorAll("[data-act]").forEach(inp=>{
+    inp.addEventListener("input", (e)=>{
+      const [is, rs, slot] = inp.dataset.act.split("-");
+      const i=+is, ri=+rs;
+      if(!sessionCtx.actual) sessionCtx.actual = blankActual(sessionCtx.day);
+      sessionCtx.actual[i][ri][slot] = e.target.value;
+      // 兩格都有填的輪數 → 自動推進「已完成輪數」，只增不減（手動按的不會被蓋掉）
+      const filled = sessionCtx.actual[i].filter(r=> r.a!=="" && r.b!=="").length;
+      if(filled > sessionCtx.rounds[i]){
+        sessionCtx.rounds[i] = filled;
+        // 不整頁重畫（會讓輸入框失焦），只更新這一組的輪數顯示
+        const blk = inp.closest(".ss-block");
+        const max = DAYS[sessionCtx.day].supersets[i].rounds;
+        if(blk){
+          const r = blk.querySelector(".ss-head .r"); if(r) r.textContent = `${filled}/${max} 輪`;
+          const lab = blk.querySelector(".done-row label"); if(lab) lab.textContent = `已完成 ${filled} / ${max} 輪`;
+          const mi = blk.querySelector("[data-round-minus]"); if(mi) mi.disabled = filled<=0;
+          const pl = blk.querySelector("[data-round-plus]"); if(pl) pl.disabled = filled>=max;
+        }
+      }
+      saveDraft();
     });
   });
   document.querySelectorAll("[data-timer]").forEach(b=>{
@@ -2387,6 +2569,7 @@ function bindDynamic(){
       rounds: sessionCtx.rounds.slice(),
       rir: sessionCtx.rir.slice(),
       swaps: Object.assign({}, sessionCtx.swaps||{}),
+      actual: (sessionCtx.actual||[]).map(rows=> rows.map(r=>({a:r.a, b:r.b}))),
       note: sessionCtx.note
     });
     saveState();
@@ -2431,13 +2614,9 @@ function bindDynamic(){
     });
   });
   const exportBtn = document.getElementById("exportBtn");
-  if(exportBtn) exportBtn.addEventListener("click", ()=>{
-    const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `h30-backup-${todayStr()}.json`;
-    a.click(); URL.revokeObjectURL(url);
-  });
+  if(exportBtn) exportBtn.addEventListener("click", ()=>{ doExport(); render(); });
+  const exportBtnHome = document.getElementById("exportBtnHome");
+  if(exportBtnHome) exportBtnHome.addEventListener("click", ()=>{ doExport(); render(); });
   const importFile = document.getElementById("importFile");
   if(importFile) importFile.addEventListener("change", (e)=>{
     const file = e.target.files[0];
@@ -2447,7 +2626,8 @@ function bindDynamic(){
       try{
         const data = JSON.parse(reader.result);
         if(!confirm("匯入將覆蓋目前所有紀錄，確定嗎？")) return;
-        state = {sessions:data.sessions||[], stages:data.stages||{}, protein:data.protein||{}};
+        state = {sessions:data.sessions||[], stages:data.stages||{}, protein:data.protein||{},
+                 defaultSwaps:data.defaultSwaps||{}, lastBackup:Date.now(), theme:state.theme};
         saveState(); render();
       }catch(err){ alert("檔案格式錯誤，無法匯入"); }
     };
